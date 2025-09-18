@@ -15,7 +15,9 @@ public class NativeAudioNotificationPlugin extends Plugin {
     @Override
     public void load() {
         try {
-            implementation = new NativeAudioNotification(getContext());
+            NativeAudioNotification.destroyInstance();
+            NativeAudioNotification.getInstance(getContext());
+            implementation = NativeAudioNotification.getInstance(getContext()); // Use singleton
         } catch (Exception e) {
             Log.e(TAG, "Error loading plugin: " + e.getMessage(), e);
         }
@@ -24,7 +26,6 @@ public class NativeAudioNotificationPlugin extends Plugin {
     @PluginMethod
     public void configure(PluginCall call) {
         try {
-            // Future config options can be added here (e.g., TTS voice settings)
             call.resolve();
         } catch (Exception e) {
             Log.e(TAG, "Error in configure: " + e.getMessage(), e);
@@ -64,7 +65,7 @@ public class NativeAudioNotificationPlugin extends Plugin {
             if (implementation != null) {
                 implementation.setMerchantInfo(businessName);
                 JSObject ret = new JSObject();
-                ret.put("businessName", implementation.getMerchantBusiness()); // Return current value
+                ret.put("businessName", implementation.getMerchantBusiness());
                 call.resolve(ret);
             } else {
                 call.reject("Implementation not initialized");
@@ -79,7 +80,6 @@ public class NativeAudioNotificationPlugin extends Plugin {
     public void toggleNotifications(PluginCall call) {
         try {
             boolean enabled = call.getBoolean("enabled", true);
-            // Placeholder: Add logic to start/stop foreground service or FCM listener if needed
             JSObject ret = new JSObject();
             ret.put("enabled", enabled);
             call.resolve(ret);
@@ -125,8 +125,9 @@ public class NativeAudioNotificationPlugin extends Plugin {
         try {
             if (implementation != null) {
                 implementation.cleanup();
-                implementation = null; // Nullify to prevent reuse
+                implementation = null;
             }
+            NativeAudioNotification.destroyInstance();
         } catch (Exception e) {
             Log.e(TAG, "Error in handleOnDestroy: " + e.getMessage(), e);
         }

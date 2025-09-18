@@ -12,23 +12,38 @@ import android.speech.tts.TextToSpeech;
 import android.speech.tts.UtteranceProgressListener;
 import android.util.Log;
 import androidx.core.app.NotificationCompat;
+
 import java.util.Locale;
 
 public class NativeAudioNotification implements TextToSpeech.OnInitListener {
     private static final String TAG = "NativeAudioNotification";
-    private static final String CHANNEL_ID = "payment_channel";
+    private static final String CHANNEL_ID = NotificationChannelHelper.DEFAULT_CHANNEL_ID;
+    private static NativeAudioNotification instance;
     private Context context;
     private TextToSpeech tts;
-    private String merchantBusiness = "Your Business"; // Default value
+    private String merchantBusiness = "Your Business";
     private PowerManager.WakeLock wakeLock;
 
-    public NativeAudioNotification(Context context) {
-        this.context = context;
+    private NativeAudioNotification(Context context) {
+        this.context = context != null ? context.getApplicationContext() : null;
         try {
-            tts = new TextToSpeech(context, this);
-            createNotificationChannel();
+            tts = new TextToSpeech(this.context, this);
         } catch (Exception e) {
             Log.e(TAG, "Error initializing NativeAudioNotification: " + e.getMessage(), e);
+        }
+    }
+
+    public static synchronized NativeAudioNotification getInstance(Context context) {
+        if (instance == null) {
+            instance = new NativeAudioNotification(context);
+        }
+        return instance;
+    }
+
+    public static synchronized void destroyInstance() {
+        if (instance != null) {
+            instance.cleanup();
+            instance = null;
         }
     }
 
@@ -36,7 +51,7 @@ public class NativeAudioNotification implements TextToSpeech.OnInitListener {
     public void onInit(int status) {
         try {
             if (status == TextToSpeech.SUCCESS) {
-                int result = tts.setLanguage(Locale.ENGLISH); // Adjust for regional language (e.g., Locale("hi_IN") for Hindi)
+                int result = tts.setLanguage(Locale.ENGLISH);
                 if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
                     Log.e(TAG, "TTS language not supported, falling back to default");
                     tts.setLanguage(Locale.getDefault());
@@ -65,10 +80,8 @@ public class NativeAudioNotification implements TextToSpeech.OnInitListener {
     public void playPaymentNotification(String amount, String currency, String customerName, String transactionId, long timestamp) {
         try {
             acquireWakeLock();
-
             String audioText = currency + " " + amount + " received from " + (customerName != null ? customerName : "customer") + " on " + merchantBusiness;
-            playTts(audioText);
-
+            playTtsOnly(audioText);
             showLockScreenNotification(amount, currency, customerName, transactionId, timestamp);
         } catch (Exception e) {
             Log.e(TAG, "Error playing payment notification: " + e.getMessage(), e);
@@ -79,25 +92,17 @@ public class NativeAudioNotification implements TextToSpeech.OnInitListener {
         try {
             if (tts != null) {
                 AudioAttributes audioAttributes = new AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ALARM) // Override silent/vibrate modes
+                        .setUsage(AudioAttributes.USAGE_ALARM)
                         .build();
                 tts.setAudioAttributes(audioAttributes);
                 tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, "payment_utterance_" + System.currentTimeMillis());
                 tts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
                     @Override
-                    public void onStart(String utteranceId) {
-                        Log.d(TAG, "TTS started for utterance: " + utteranceId);
-                    }
-
+                    public void onStart(String utteranceId) { Log.d(TAG, "TTS started for utterance: " + utteranceId); }
                     @Override
-                    public void onDone(String utteranceId) {
-                        Log.d(TAG, "TTS completed for utterance: " + utteranceId);
-                    }
-
+                    public void onDone(String utteranceId) { Log.d(TAG, "TTS completed for utterance: " + utteranceId); }
                     @Override
-                    public void onError(String utteranceId) {
-                        Log.e(TAG, "TTS error for utterance: " + utteranceId);
-                    }
+                    public void onError(String utteranceId) { Log.e(TAG, "TTS error for utterance: " + utteranceId); }
                 });
             } else {
                 Log.w(TAG, "TTS not initialized, skipping audio");
@@ -113,7 +118,7 @@ public class NativeAudioNotification implements TextToSpeech.OnInitListener {
             if (pm != null) {
                 wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP | PowerManager.ON_AFTER_RELEASE, "PaymentNotification::WakeLock");
                 if (wakeLock != null) {
-                    wakeLock.acquire(10000); // Acquire for 10 seconds
+                    wakeLock.acquire(10000);
                     Log.d(TAG, "Wake lock acquired");
                 } else {
                     Log.w(TAG, "Failed to create wake lock");
@@ -132,22 +137,22 @@ public class NativeAudioNotification implements TextToSpeech.OnInitListener {
         try {
             NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
             if (nm != null) {
-                Intent intent = new Intent(context, context.getClass()); // Replace with your main activity class if needed
+                Intent intent = new Intent(context, Class.forName(context.getPackageName() + ".MainActivity"));
                 intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
                 intent.putExtra("transactionId", transactionId);
                 PendingIntent pendingIntent = PendingIntent.getActivity(context, transactionId.hashCode(), intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
                 NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_ID)
-                        .setSmallIcon(android.R.drawable.ic_dialog_alert) // Replace with your app's icon
+                        .setSmallIcon(android.R.drawable.ic_dialog_alert)
                         .setContentTitle("Payment Received")
                         .setContentText(currency + " " + amount + " from " + (customerName != null ? customerName : "customer"))
                         .setPriority(NotificationCompat.PRIORITY_MAX)
-                        .setVisibility(NotificationCompat.VISIBILITY_PUBLIC) // Visible on lock screen
+                        .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
                         .setCategory(NotificationCompat.CATEGORY_ALARM)
-                        .setFullScreenIntent(pendingIntent, true) // Heads-up on lock screen
+                        .setFullScreenIntent(pendingIntent, true)
                         .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Acknowledge", getAcknowledgeIntent(transactionId.hashCode()))
                         .addAction(android.R.drawable.ic_menu_info_details, "View Details", pendingIntent)
-                        .setAutoCancel(false) // Persist until interaction
+                        .setAutoCancel(false)
                         .setWhen(timestamp)
                         .setShowWhen(true);
 
@@ -156,6 +161,8 @@ public class NativeAudioNotification implements TextToSpeech.OnInitListener {
             } else {
                 Log.w(TAG, "NotificationManager not available");
             }
+        } catch (ClassNotFoundException e) {
+            Log.e(TAG, "MainActivity class not found: " + e.getMessage(), e);
         } catch (SecurityException e) {
             Log.e(TAG, "Security exception showing notification: " + e.getMessage(), e);
         } catch (Exception e) {
@@ -174,39 +181,17 @@ public class NativeAudioNotification implements TextToSpeech.OnInitListener {
         }
     }
 
-    private void createNotificationChannel() {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "Payment Notifications", NotificationManager.IMPORTANCE_HIGH);
-                channel.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
-                channel.enableVibration(true);
-                channel.setBypassDnd(true); // Override Do Not Disturb
-                NotificationManager nm = context.getSystemService(NotificationManager.class);
-                if (nm != null) {
-                    nm.createNotificationChannel(channel);
-                    Log.d(TAG, "Notification channel created");
-                } else {
-                    Log.w(TAG, "NotificationManager not available for channel creation");
-                }
-            }
-        } catch (SecurityException e) {
-            Log.e(TAG, "Security exception creating notification channel: " + e.getMessage(), e);
-        } catch (Exception e) {
-            Log.e(TAG, "Error creating notification channel: " + e.getMessage(), e);
-        }
-    }
-
     public void cleanup() {
         try {
             if (tts != null) {
                 tts.stop();
                 tts.shutdown();
-                tts = null; // Nullify to prevent reuse
+                tts = null;
                 Log.d(TAG, "TTS cleaned up");
             }
             if (wakeLock != null && wakeLock.isHeld()) {
                 wakeLock.release();
-                wakeLock = null; // Nullify to prevent reuse
+                wakeLock = null;
                 Log.d(TAG, "Wake lock released");
             }
         } catch (Exception e) {
@@ -214,12 +199,10 @@ public class NativeAudioNotification implements TextToSpeech.OnInitListener {
         }
     }
 
-    // Getter for merchantBusiness to be used by PaymentMessagingService
     public String getMerchantBusiness() {
         return merchantBusiness != null ? merchantBusiness : "Your Business";
     }
 
-    // New method to stop TTS if needed (e.g., on acknowledgment)
     public void stopTts() {
         try {
             if (tts != null && tts.isSpeaking()) {

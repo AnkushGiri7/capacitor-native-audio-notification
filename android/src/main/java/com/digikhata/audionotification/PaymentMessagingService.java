@@ -27,22 +27,18 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public class PaymentMessagingService extends FirebaseMessagingService implements TextToSpeech.OnInitListener {
+public class PaymentMessagingService extends FirebaseMessagingService {
     private static final String TAG = "PaymentMessagingService";
     private static final AtomicInteger NOTIFICATION_ID_GENERATOR = new AtomicInteger(1000);
-    private static final String CHANNEL_ID = "payment_channel"; // Consistent with NotificationChannelHelper
-
-    private TextToSpeech tts;
-    private NativeAudioNotification audioNotification;
-    private PowerManager.WakeLock wakeLock;
+    private static final String CHANNEL_ID = NotificationChannelHelper.DEFAULT_CHANNEL_ID;
+    private PendingIntent ackPendingIntent;
 
     @Override
     public void onCreate() {
         super.onCreate();
         try {
-            audioNotification = new NativeAudioNotification(this);
-            tts = new TextToSpeech(this, this); // Initialize TTS
-            startForegroundServiceNotification(); // Start as foreground service
+            NativeAudioNotification.getInstance(this); // Initialize singleton
+            startForegroundServiceNotification();
         } catch (Exception e) {
             Log.e(TAG, "Failed to initialize service: " + e.getMessage(), e);
         }
@@ -51,14 +47,7 @@ public class PaymentMessagingService extends FirebaseMessagingService implements
     @Override
     public void onDestroy() {
         try {
-            if (audioNotification != null) {
-                audioNotification.cleanup(); // Use NativeAudioNotification cleanup
-                audioNotification = null;
-            }
-            if (wakeLock != null && wakeLock.isHeld()) {
-                wakeLock.release();
-                wakeLock = null;
-            }
+            NativeAudioNotification.destroyInstance();
         } catch (Exception e) {
             Log.e(TAG, "Error during cleanup: " + e.getMessage(), e);
         }
@@ -73,11 +62,7 @@ public class PaymentMessagingService extends FirebaseMessagingService implements
         if (data.containsKey("type") && "payment".equals(data.get("type"))) {
             handlePaymentNotification(data, remoteMessage.getNotification());
         } else if (remoteMessage.getNotification() != null) {
-            showNotification(
-                remoteMessage.getNotification().getTitle(),
-                remoteMessage.getNotification().getBody(),
-                data
-            );
+            showNotification(remoteMessage.getNotification().getTitle(), remoteMessage.getNotification().getBody(), data);
         }
     }
 
@@ -85,28 +70,6 @@ public class PaymentMessagingService extends FirebaseMessagingService implements
     public void onNewToken(String token) {
         Log.d(TAG, "Refreshed token received (partial): " + token.substring(0, Math.min(token.length(), 10)) + "...");
         sendTokenToServer(token);
-    }
-
-    @Override
-    public void onInit(int status) {
-        try {
-            if (status == TextToSpeech.SUCCESS) {
-                int result = tts.setLanguage(Locale.ENGLISH); // Adjust for regional language if needed
-                if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                    Log.e(TAG, "TTS language not supported, using default");
-                    tts.setLanguage(Locale.getDefault());
-                } else {
-                    AudioAttributes audioAttributes = new AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_ALARM)
-                            .build();
-                    tts.setAudioAttributes(audioAttributes);
-                }
-            } else {
-                Log.e(TAG, "TTS initialization failed with status: " + status);
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error in TTS onInit: " + e.getMessage(), e);
-        }
     }
 
     private void handlePaymentNotification(Map<String, String> data, RemoteMessage.Notification notification) {
@@ -125,9 +88,10 @@ public class PaymentMessagingService extends FirebaseMessagingService implements
 
     private void playTtsNotification(String amount, String currency, String senderName) {
         try {
+            NativeAudioNotification audioNotification = NativeAudioNotification.getInstance(this);
             if (audioNotification != null) {
                 String audioText = currency + " " + amount + " received from " + senderName + " on " + audioNotification.getMerchantBusiness();
-                audioNotification.playTtsOnly(audioText); // Use NativeAudioNotification's method
+                audioNotification.playTtsOnly(audioText);
             } else {
                 Log.w(TAG, "audioNotification not initialized");
             }
@@ -136,10 +100,12 @@ public class PaymentMessagingService extends FirebaseMessagingService implements
         }
     }
 
-    private void showPaymentNotification(String title, String body, String senderName, 
-                                       String amount, String currency, String transactionId,
-                                       String imageUrl) {
+    private void showPaymentNotification(String title, String body, String senderName, String amount, String currency, String transactionId, String imageUrl) {
         try {
+            Intent ackIntent = new Intent(this, AcknowledgeReceiver.class);
+            ackIntent.putExtra("notificationId", transactionId.hashCode());
+            ackPendingIntent = PendingIntent.getBroadcast(this, transactionId.hashCode(), ackIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+
             Intent intent = new Intent(this, getMainActivityClass());
             intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
             intent.putExtra("transactionId", transactionId);
@@ -148,52 +114,43 @@ public class PaymentMessagingService extends FirebaseMessagingService implements
             intent.putExtra("currency", currency);
             intent.putExtra("notificationTapped", true);
 
-            PendingIntent pendingIntent = PendingIntent.getActivity(
-                this, NOTIFICATION_ID_GENERATOR.getAndIncrement(), intent, 
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            PendingIntent pendingIntent = PendingIntent.getActivity(this, NOTIFICATION_ID_GENERATOR.getAndIncrement(), intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
             NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(getApplicationInfo().icon)
-                .setContentTitle(title)
-                .setContentText(body)
-                .setPriority(NotificationCompat.PRIORITY_MAX)
-                .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-                .setAutoCancel(false) // Persist until acknowledged
-                .setContentIntent(pendingIntent)
-                .setFullScreenIntent(pendingIntent, true)
-                .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-                .setOngoing(false)
-                .setTicker(title)
-                .setDefaults(NotificationCompat.DEFAULT_ALL)
-                .setVibrate(new long[]{0, 300, 100, 300, 100, 300, 100, 600})
-                .setLights(Color.GREEN, 1000, 1000)
-                .setShowWhen(true)
-                .setWhen(System.currentTimeMillis());
+                    .setSmallIcon(getApplicationInfo().icon)
+                    .setContentTitle(title)
+                    .setContentText(body)
+                    .setPriority(NotificationCompat.PRIORITY_MAX)
+                    .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+                    .setAutoCancel(false)
+                    .setContentIntent(pendingIntent)
+                    .setFullScreenIntent(pendingIntent, true)
+                    .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+                    .setOngoing(false)
+                    .setTicker(title)
+                    .setDefaults(NotificationCompat.DEFAULT_ALL)
+                    .setVibrate(new long[]{0, 300, 100, 300, 100, 300, 100, 600})
+                    .setLights(Color.GREEN, 1000, 1000)
+                    .setShowWhen(true)
+                    .setWhen(System.currentTimeMillis());
 
-            // Add big text style
             NotificationCompat.BigTextStyle bigTextStyle = new NotificationCompat.BigTextStyle()
-                .bigText("Payment of " + currency + amount + " received from " + senderName)
-                .setBigContentTitle("💰 " + title);
+                    .bigText("Payment of " + currency + amount + " received from " + senderName)
+                    .setBigContentTitle("💰 " + title);
             builder.setStyle(bigTextStyle);
 
-            // Add image if provided
             if (imageUrl != null && !imageUrl.isEmpty()) {
                 InputStream in = new URL(imageUrl).openStream();
                 Bitmap bitmap = BitmapFactory.decodeStream(in);
                 builder.setLargeIcon(bitmap);
                 NotificationCompat.BigPictureStyle bigPictureStyle = new NotificationCompat.BigPictureStyle()
-                    .bigPicture(bitmap)
-                    .bigLargeIcon(null)
-                    .setBigContentTitle("💰 " + title)
-                    .setSummaryText("Payment of " + currency + amount + " received from " + senderName);
+                        .bigPicture(bitmap)
+                        .bigLargeIcon(null)
+                        .setBigContentTitle("💰 " + title)
+                        .setSummaryText("Payment of " + currency + amount + " received from " + senderName);
                 builder.setStyle(bigPictureStyle);
             }
 
-            // Add acknowledge action
-            Intent ackIntent = new Intent(this, AcknowledgeReceiver.class);
-            ackIntent.putExtra("notificationId", transactionId.hashCode());
-            PendingIntent ackPendingIntent = PendingIntent.getBroadcast(
-                this, transactionId.hashCode(), ackIntent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             builder.addAction(android.R.drawable.ic_menu_close_clear_cancel, "Acknowledge", ackPendingIntent);
 
             NotificationManagerCompat notificationManager = NotificationManagerCompat.from(this);
@@ -214,17 +171,15 @@ public class PaymentMessagingService extends FirebaseMessagingService implements
             Intent intent = new Intent(this, getMainActivityClass());
             intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
 
-            PendingIntent pendingIntent = PendingIntent.getActivity(
-                this, NOTIFICATION_ID_GENERATOR.getAndIncrement(), intent, 
-                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+            PendingIntent pendingIntent = PendingIntent.getActivity(this, NOTIFICATION_ID_GENERATOR.getAndIncrement(), intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
 
             NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
-                .setSmallIcon(getApplicationInfo().icon)
-                .setContentTitle(title)
-                .setContentText(body)
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .setAutoCancel(true)
-                .setContentIntent(pendingIntent);
+                    .setSmallIcon(getApplicationInfo().icon)
+                    .setContentTitle(title)
+                    .setContentText(body)
+                    .setPriority(NotificationCompat.PRIORITY_HIGH)
+                    .setAutoCancel(true)
+                    .setContentIntent(pendingIntent);
 
             NotificationManagerCompat notificationManager = NotificationManagerCompat.from(this);
             notificationManager.notify(NOTIFICATION_ID_GENERATOR.getAndIncrement(), builder.build());
@@ -241,10 +196,10 @@ public class PaymentMessagingService extends FirebaseMessagingService implements
             if (powerManager != null && !powerManager.isInteractive()) {
                 @SuppressWarnings("deprecation")
                 PowerManager.WakeLock wakeLock = powerManager.newWakeLock(
-                    PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP,
-                    "PaymentNotification:WakeLock"
+                        PowerManager.SCREEN_BRIGHT_WAKE_LOCK | PowerManager.ACQUIRE_CAUSES_WAKEUP,
+                        "PaymentNotification:WakeLock"
                 );
-                wakeLock.acquire(3000L); // 3 seconds
+                wakeLock.acquire(3000L);
                 wakeLock.release();
             }
         } catch (Exception e) {
@@ -253,7 +208,6 @@ public class PaymentMessagingService extends FirebaseMessagingService implements
     }
 
     private void sendTokenToServer(String token) {
-        // TODO: Implement server communication or expose to JS
         Log.i(TAG, "Sending FCM token to server (partial): " + token.substring(0, Math.min(token.length(), 10)) + "...");
     }
 
@@ -270,42 +224,21 @@ public class PaymentMessagingService extends FirebaseMessagingService implements
         return (input == null || input.trim().isEmpty()) ? defaultValue : input;
     }
 
-    // Start foreground service with a minimal notification
-    // private void startForegroundServiceNotification() {
-    //     try {
-    //         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-    //             NotificationManager nm = getSystemService(NotificationManager.class);
-    //             if (nm != null) {
-    //                 NotificationChannel channel = new NotificationChannel(
-    //                     CHANNEL_ID, "Payment Service", NotificationManager.IMPORTANCE_LOW);
-    //                 nm.createNotificationChannel(channel);
-
-    //                 NotificationCompat.Builder builder = new NotificationCompat.Builder(this, CHANNEL_ID)
-    //                     .setSmallIcon(android.R.drawable.ic_dialog_info)
-    //                     .setContentTitle("Payment Service Running")
-    //                     .setContentText("Listening for payment notifications")
-    //                     .setPriority(NotificationCompat.PRIORITY_LOW);
-
-    //                 startForeground(1001, builder.build());
-    //                 Log.d(TAG, "Foreground service started");
-    //             } else {
-    //                 Log.w(TAG, "NotificationManager not available for foreground service");
-    //             }
-    //         }
-    //     } catch (SecurityException e) {
-    //         Log.e(TAG, "Security exception starting foreground service: " + e.getMessage(), e);
-    //     } catch (Exception e) {
-    //         Log.e(TAG, "Error starting foreground service: " + e.getMessage(), e);
-    //     }
-    // }
     private void startForegroundServiceNotification() {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationManager nm = getSystemService(NotificationManager.class);
+                if (nm != null && nm.getNotificationChannel(NotificationChannelHelper.DEFAULT_CHANNEL_ID) == null) {
+                    Log.w(TAG, "Channel not found, creating fallback");
+                    NotificationChannel channel = new NotificationChannel(
+                            NotificationChannelHelper.DEFAULT_CHANNEL_ID, "Payment Service", NotificationManager.IMPORTANCE_LOW);
+                    nm.createNotificationChannel(channel);
+                }
                 NotificationCompat.Builder builder = new NotificationCompat.Builder(this, NotificationChannelHelper.DEFAULT_CHANNEL_ID)
-                    .setSmallIcon(android.R.drawable.ic_dialog_info)
-                    .setContentTitle("Payment Service Running")
-                    .setContentText("Listening for payment notifications")
-                    .setPriority(NotificationCompat.PRIORITY_LOW);
+                        .setSmallIcon(android.R.drawable.ic_dialog_info)
+                        .setContentTitle("Payment Service Running")
+                        .setContentText("Listening for payment notifications")
+                        .setPriority(NotificationCompat.PRIORITY_LOW);
 
                 startForeground(1001, builder.build());
                 Log.d(TAG, "Foreground service started");
@@ -317,8 +250,8 @@ public class PaymentMessagingService extends FirebaseMessagingService implements
         }
     }
 
-    // Helper to access merchant business name from NativeAudioNotification
     public String getMerchantBusiness() {
+        NativeAudioNotification audioNotification = NativeAudioNotification.getInstance(this);
         return audioNotification != null ? audioNotification.getMerchantBusiness() : "Your Business";
     }
 }
