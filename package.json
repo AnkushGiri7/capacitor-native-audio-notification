@@ -8,6 +8,7 @@
   "unpkg": "dist/plugin.js",
   "files": [
     "android/src/main/java/com/digikhata/audionotification/",
+    "android/src/main/",
     "android/build.gradle",
     "dist/",
     "ios/Sources",
