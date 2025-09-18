@@ -19,7 +19,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/AnkushGiri7/capacitor-native-audio-notification.git.git"
+    "url": "git+https://github.com/AnkushGiri7/capacitor-native-audio-notification.git"
   },
   "bugs": {
     "url": "https://github.com/AnkushGiri7/capacitor-native-audio-notification.git/issues"
@@ -43,7 +43,8 @@
     "build": "npm run clean && npm run docgen && tsc && rollup -c rollup.config.mjs",
     "clean": "rimraf ./dist",
     "watch": "tsc --watch",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "npm run build",
+    "prepare": "npm run build" 
   },
   "devDependencies": {
     "@capacitor/android": "^7.0.0",
