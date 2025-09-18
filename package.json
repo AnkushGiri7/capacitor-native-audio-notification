@@ -7,7 +7,7 @@
   "types": "dist/esm/index.d.ts",
   "unpkg": "dist/plugin.js",
   "files": [
-    "android/src/main/",
+    "android/src/main/java/com/digikhata/audionotification/",
     "android/build.gradle",
     "dist/",
     "ios/Sources",
@@ -44,7 +44,7 @@
     "clean": "rimraf ./dist",
     "watch": "tsc --watch",
     "prepublishOnly": "npm run build",
-    "prepare": "npm run build" 
+    "prepare": "npm run build"
   },
   "devDependencies": {
     "@capacitor/android": "^7.0.0",
@@ -71,11 +71,11 @@
     "extends": "@ionic/eslint-config/recommended"
   },
   "capacitor": {
+    "android": {
+      "src": "android/src/main/java/com/digikhata/audionotification"
+    },
     "ios": {
       "src": "ios"
-    },
-    "android": {
-      "src": "android"
     }
   }
 }

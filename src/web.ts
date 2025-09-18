@@ -1,5 +1,4 @@
 import { WebPlugin } from '@capacitor/core';
-
 import type { NativeAudioNotificationPlugin } from './definitions';
 
 export class NativeAudioNotificationWeb extends WebPlugin implements NativeAudioNotificationPlugin {
