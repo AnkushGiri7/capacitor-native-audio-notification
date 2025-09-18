@@ -1,24 +1,20 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.digikhata.audionotification">
-
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-
-    <receiver android:name=".BootReceiver" android:exported="true">
-        <intent-filter>
-            <action android:name="android.intent.action.BOOT_COMPLETED" />
-            <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
-            <action android:name="android.intent.action.PACKAGE_REPLACED" />
-        </intent-filter>
-    </receiver>
-
-    <receiver android:name=".AcknowledgeReceiver" android:exported="false" />
-
-    <service android:name=".PaymentMessagingService" android:exported="false"
-        android:foregroundServiceType="dataSync">
-        <intent-filter>
-            <action android:name="com.google.firebase.MESSAGING_EVENT" />
-        </intent-filter>
-    </service>
-
+    <application>
+        <receiver android:name=".BootReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+        <receiver android:name=".AcknowledgeReceiver" android:exported="false" />
+        <service android:name=".PaymentMessagingService" android:exported="false"
+            android:foregroundServiceType="dataSync">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+    </application>
 </manifest>
